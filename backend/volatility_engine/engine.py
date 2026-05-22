@@ -387,14 +387,13 @@ class VolatilityEngine:
             }
         }
         self.build_context(dumpfiles_plugin)
-        self.context.config["plugins.DumpFiles.virtaddr"] = [int(offset)]
+        self.context.config["plugins.DumpFiles.virtaddr"] = int(offset)
         builted_plugin = self.construct_plugin()
         try:
             result = self.run_plugin(builted_plugin)
             if not result:
                 del self.context.config["plugins.DumpFiles.virtaddr"]
-                self.context.config["plugins.DumpFiles.physaddr"] = [int(offset)]
-
+                self.context.config["plugins.DumpFiles.physaddr"] = int(offset)
                 result = self.run_plugin(builted_plugin)
 
             fix_permissions(f"media/{self.obj.id}")
@@ -415,14 +414,14 @@ class VolatilityEngine:
             }
         }
         self.build_context(dumpfiles_plugin)
-        self.context.config["plugins.DumpFiles.virtaddr"] = [int(offset)]
+        self.context.config["plugins.DumpFiles.virtaddr"] = int(offset)
         builted_plugin = self.construct_plugin()
         try:
             result = self.run_plugin(builted_plugin)
             fix_permissions(f"media/{self.evidence.id}")
             if not result:
                 del self.context.config["plugins.DumpFiles.virtaddr"]
-                self.context.config["plugins.DumpFiles.physaddr"] = [int(offset)]
+                self.context.config["plugins.DumpFiles.physaddr"] = int(offset)
                 result = self.run_plugin(builted_plugin)
 
             fix_permissions(f"media/{self.obj.id}")

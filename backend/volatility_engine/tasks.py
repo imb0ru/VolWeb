@@ -274,14 +274,17 @@ def start_ruleset_validation(yara_ruleset_id, skip_rule_validation=False):
 
 
 @shared_task
-def start_yarascan(evidence_id, rulesets=None, rules=None):
+def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
     """
     Run YARA scan on evidence with selected rulesets and/or individual rules.
-    
+
     Args:
         evidence_id: ID of the evidence to scan
         rulesets: List of ruleset IDs to use
         rules: List of individual rule IDs to use
+        scan_scope: "vad" (per-process memory, default) or "kernel"
+                    (kernel layer). Selects which Volatility plugin
+                    drives the scan; see VolatilityEngine.run_yara_scan.
     """
     import traceback
     from datetime import datetime
@@ -330,8 +333,8 @@ def start_yarascan(evidence_id, rulesets=None, rules=None):
                     logger.warning(f"Ruleset {ruleset_id} not found")
             
             if selected_rulesets:
-                logger.info(f"Running YARA scan with {len(selected_rulesets)} rulesets combined")
-                scan_result = engine.run_yara_scan(yara_rulesets=selected_rulesets)
+                logger.info(f"Running YARA scan with {len(selected_rulesets)} rulesets combined (scope={scan_scope})")
+                scan_result = engine.run_yara_scan(yara_rulesets=selected_rulesets, scan_scope=scan_scope)
                 
                 # Mark that a scan was executed
                 scan_executed = True
@@ -342,9 +345,9 @@ def start_yarascan(evidence_id, rulesets=None, rules=None):
                     
         # If specific rules are selected (without ruleset)
         elif rules:
-            logger.info(f"Running YARA scan with individual rules: {rules}")
-            
-            scan_result = engine.run_yara_scan(yara_rules=rules)
+            logger.info(f"Running YARA scan with individual rules: {rules} (scope={scan_scope})")
+
+            scan_result = engine.run_yara_scan(yara_rules=rules, scan_scope=scan_scope)
             
             # Mark that a scan was executed
             scan_executed = True
@@ -355,8 +358,8 @@ def start_yarascan(evidence_id, rulesets=None, rules=None):
                 
         # If no specific selections, run with all active rules
         else:
-            logger.info("Running YARA scan with all active rules")
-            scan_result = engine.run_yara_scan()
+            logger.info(f"Running YARA scan with all active rules (scope={scan_scope})")
+            scan_result = engine.run_yara_scan(scan_scope=scan_scope)
             
             # Mark that a scan was executed
             scan_executed = True

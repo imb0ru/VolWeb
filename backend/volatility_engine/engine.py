@@ -670,9 +670,15 @@ class VolatilityEngine:
             self.obj.save()
             return self.obj.status
         
-    def run_yara_scan(self, yara_ruleset=None, yara_rules=None, yara_rulesets=None):
+    def run_yara_scan(self, yara_ruleset=None, yara_rules=None, yara_rulesets=None, scan_scope="vad"):
         """
         Run YARA scan on evidence with selected ruleset(s) or rules.
+
+        scan_scope:
+            - "vad"    -> scan process memory via VadYaraScan (default).
+                          Best for malware/ransomware artefacts in user space.
+            - "kernel" -> scan the primary (kernel) layer via plain YaraScan.
+                          Use for rootkits or kernel-mode threats.
         """
         from yararules.models import YaraRule
         import traceback
@@ -811,9 +817,28 @@ class VolatilityEngine:
             formatted_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             scan_description = f"YARA scan using {' + '.join(scan_description_parts)} - processing at {formatted_timestamp}"
             
-            # Configure YARA scan plugin for Volatility
+            # Plugin selection depends on the requested scan scope:
+            #   - "vad"    -> per-process VadYaraScan (covers user-space memory
+            #                  where ransomware payloads, mutex strings, command
+            #                  lines and registry-related strings actually live)
+            #   - "kernel" -> generic yarascan.YaraScan on the primary layer
+            #                  (kernel space — appropriate for rootkits and
+            #                  kernel-mode threats)
+            target_os = getattr(self.obj, "os", "windows")
+            normalized_scope = (scan_scope or "vad").lower()
+            if normalized_scope == "kernel":
+                yarascan_cls = volatility3.plugins.yarascan.YaraScan
+                plugin_config_prefix = "plugins.YaraScan"
+            else:
+                if target_os == "linux":
+                    import volatility3.plugins.linux.vadyarascan as _vad_mod
+                else:
+                    import volatility3.plugins.windows.vadyarascan as _vad_mod
+                yarascan_cls = _vad_mod.VadYaraScan
+                plugin_config_prefix = "plugins.VadYaraScan"
+
             yara_plugin = {
-                volatility3.plugins.yarascan.YaraScan: {
+                yarascan_cls: {
                     "icon": "🔍",
                     "description": scan_description,
                     "category": "Malware",
@@ -821,37 +846,44 @@ class VolatilityEngine:
                     "name": f"volatility3.plugins.yarascan.{scan_id}",
                 }
             }
-            
+
             # Build context and configure plugin
             self.build_context(yara_plugin)
-            
-            # Try different path formats for the file
-            # Option 1: file:// URL with absolute path
+
+            # Configure both the VadYaraScan plugin and the underlying
+            # yarascan.YaraScan it delegates to (Volatility passes the
+            # yara_file config through the embedded scanner).
             file_url = f"file://{os.path.abspath(temp_file_path)}"
-            self.context.config["plugins.YaraScan.yara_file"] = file_url
-            
-            logger.info(f"Context config after YARA file: {self.context.config.get('plugins.YaraScan.yara_file')}")
+            for prefix in (plugin_config_prefix, "plugins.YaraScan"):
+                self.context.config[f"{prefix}.yara_file"] = file_url
+
+            logger.info(f"YARA plugin selected: {yarascan_cls.__module__}.{yarascan_cls.__name__}")
+            logger.info(f"Context config after YARA file: {self.context.config.get(f'{plugin_config_prefix}.yara_file')}")
             logger.info(f"Layer stacker location: {self.context.config.get('automagic.LayerStacker.single_location')}")
-            
+
             # Build and run the plugin
             builted_plugin = self.construct_plugin()
 
             if not builted_plugin:
-                logger.error("Failed to construct YaraScan plugin")
+                logger.error("Failed to construct VadYaraScan plugin")
 
-                # If it fails with file://, try with direct absolute path
+                # Retry with the absolute path (some Volatility builds reject
+                # the file:// URL form for the yara_file config).
                 logger.info("Retrying with absolute path...")
-                self.context.config["plugins.YaraScan.yara_file"] = os.path.abspath(temp_file_path)
+                abs_path = os.path.abspath(temp_file_path)
+                for prefix in (plugin_config_prefix, "plugins.YaraScan"):
+                    self.context.config[f"{prefix}.yara_file"] = abs_path
                 builted_plugin = self.construct_plugin()
 
                 if not builted_plugin:
                     # Last attempt: relative path
                     logger.info("Retrying with relative path...")
-                    self.context.config["plugins.YaraScan.yara_file"] = temp_file_name
+                    for prefix in (plugin_config_prefix, "plugins.YaraScan"):
+                        self.context.config[f"{prefix}.yara_file"] = temp_file_name
                     builted_plugin = self.construct_plugin()
 
                 if not builted_plugin:
-                    logger.error("All attempts to construct YaraScan plugin failed")
+                    logger.error("All attempts to construct VadYaraScan plugin failed")
                     return None
 
             # Stream each match directly to a JSONL file — no in-memory accumulation.

@@ -339,9 +339,15 @@ class YaraScanTask(APIView):
         try:
             rulesets = request.data.get("rulesets", [])
             rules = request.data.get("rules", [])
+            scan_scope = request.data.get("scan_scope", "vad")
+            if scan_scope not in ("vad", "kernel"):
+                return Response(
+                    {"error": "scan_scope must be either 'vad' or 'kernel'"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             task = start_yarascan.apply_async(
                 args=[evidence.id],
-                kwargs={"rulesets": rulesets, "rules": rules},
+                kwargs={"rulesets": rulesets, "rules": rules, "scan_scope": scan_scope},
                 queue="yarascan",
             )
             evidence.celery_task_id = task.id

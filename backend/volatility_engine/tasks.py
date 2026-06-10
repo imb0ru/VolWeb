@@ -309,15 +309,20 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
             },
         )
         
-        # Initialize scan_executed to track if any scan was performed
+        # Engine.run_yara_scan return contract:
+        #   True   -> scan ran, matches found
+        #   False  -> scan ran, no matches
+        #   None   -> scan could not run (no compiled/active rules)
+        #   raises -> scan failed (e.g. YARA syntax error); caught below and
+        #             reported to the user as an error, not a success.
+        scan_result = None
         scan_executed = False
-        scan_results = []
-        
+
         # If specific rulesets are selected, combine them in a single scan
         if rulesets:
             from yararulesets.models import YaraRuleSet
             selected_rulesets = []
-            
+
             for ruleset_id in rulesets:
                 try:
                     # Try to fetch the ruleset regardless of its status. We will
@@ -331,54 +336,49 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
                         logger.warning(f"Ruleset {ruleset_id} found but not compiled yet; skipping")
                 except YaraRuleSet.DoesNotExist:
                     logger.warning(f"Ruleset {ruleset_id} not found")
-            
-            if selected_rulesets:
-                logger.info(f"Running YARA scan with {len(selected_rulesets)} rulesets combined (scope={scan_scope})")
-                scan_result = engine.run_yara_scan(yara_rulesets=selected_rulesets, scan_scope=scan_scope)
-                
-                # Mark that a scan was executed
-                scan_executed = True
-                
-                # Collect results if any matches found
-                if scan_result is not None and scan_result != []:
-                    scan_results.extend(scan_result if isinstance(scan_result, list) else [scan_result])
-                    
+
+            if not selected_rulesets:
+                raise RuntimeError(
+                    "None of the selected rulesets are compiled and ready to scan."
+                )
+
+            logger.info(f"Running YARA scan with {len(selected_rulesets)} rulesets combined (scope={scan_scope})")
+            scan_result = engine.run_yara_scan(yara_rulesets=selected_rulesets, scan_scope=scan_scope)
+            scan_executed = True
+
         # If specific rules are selected (without ruleset)
         elif rules:
             logger.info(f"Running YARA scan with individual rules: {rules} (scope={scan_scope})")
-
             scan_result = engine.run_yara_scan(yara_rules=rules, scan_scope=scan_scope)
-            
-            # Mark that a scan was executed
             scan_executed = True
-            
-            # Collect results if any matches found
-            if scan_result is not None and scan_result != []:
-                scan_results.extend(scan_result if isinstance(scan_result, list) else [scan_result])
-                
+
         # If no specific selections, run with all active rules
         else:
             logger.info(f"Running YARA scan with all active rules (scope={scan_scope})")
             scan_result = engine.run_yara_scan(scan_scope=scan_scope)
-            
-            # Mark that a scan was executed
             scan_executed = True
-            
-            # Collect results if any matches found
-            if scan_result is not None and scan_result != []:
-                scan_results.extend(scan_result if isinstance(scan_result, list) else [scan_result])
-        
-        # Determine the result based on whether scan was executed successfully
-        # A scan is successful if it was executed, regardless of whether matches were found
-        result = scan_executed
-        
+
+        # The engine returns None when nothing could actually be scanned (e.g.
+        # the selected rules were inactive or never compiled). Treat that as a
+        # failure so the UI does not report a phantom success.
+        if not scan_executed or scan_result is None:
+            raise RuntimeError(
+                "YARA scan did not run: no compiled, active rules were available "
+                "for the selected rulesets/rules."
+            )
+
+        matches_found = bool(scan_result)
+        result = matches_found  # task return value (see `return result` below)
+
         # Generate a unique scan ID with timestamp for logging
         scan_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         scan_id = f"scan_{scan_timestamp}"
-        
-        logger.info(f"YARA scan completed for evidence {evidence_id}. Found {len(scan_results)} total matches. Scan ID: {scan_id}")
-        
-        # Send finished notification
+
+        logger.info(f"YARA scan completed for evidence {evidence_id}. Matches found: {matches_found}. Scan ID: {scan_id}")
+
+        # Send finished notification. result="true" => matches found (the UI
+        # loads the results grid); result="false" => the scan completed cleanly
+        # but produced no matches.
         async_to_sync(channel_layer.group_send)(
             f"volatility_tasks_{evidence_id}",
             {
@@ -386,9 +386,8 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
                 "message": {
                     "name": "yarascan",
                     "status": "finished",
-                    "result": str(result).lower(),
+                    "result": str(matches_found).lower(),
                     "scan_id": scan_id,  # Include scan ID in notification
-                    "matches_count": len(scan_results),  # Include match count
                 },
             },
         )

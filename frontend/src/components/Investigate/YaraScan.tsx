@@ -291,6 +291,14 @@ const YaraScan: React.FC<YaraScanProps> = ({ evidenceId }) => {
         } else if (message.status === "stopped") {
           setProcessing(false);
           display_message("info", "YARA scan was stopped");
+        } else if (message.status === "error") {
+          setProcessing(false);
+          display_message(
+            "error",
+            message.error
+              ? `YaraScan failed: ${message.error}`
+              : "YaraScan failed"
+          );
         }
       }
     };

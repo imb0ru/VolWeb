@@ -6,6 +6,7 @@ import logging
 import volatility3
 import traceback
 import os
+import re
 import json
 import shutil
 from volatility3.cli import MuteProgress
@@ -36,6 +37,122 @@ import tempfile
 
 volatility3.framework.require_interface_version(2, 0, 0)
 logger = logging.getLogger(__name__)
+
+
+def _match_yara_braces(source, start):
+    """
+    Given the index of an opening ``{`` in ``source``, return the index just
+    past its matching ``}``. String literals and comments are skipped so that
+    braces appearing inside them are ignored. Hex strings and regex
+    quantifiers ({n,m}) keep their braces balanced, so plain depth counting
+    locates the real end of a rule body.
+    """
+    depth = 0
+    k, n = start, len(source)
+    while k < n:
+        ch = source[k]
+        if ch == '"':
+            k += 1
+            while k < n:
+                if source[k] == '\\':
+                    k += 2
+                    continue
+                if source[k] == '"':
+                    k += 1
+                    break
+                k += 1
+            continue
+        if source.startswith("//", k):
+            nl = source.find("\n", k)
+            k = n if nl == -1 else nl
+            continue
+        if source.startswith("/*", k):
+            end = source.find("*/", k)
+            k = n if end == -1 else end + 2
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    return n
+
+
+def _dedupe_yara_rules(source):
+    """
+    Remove duplicate top-level YARA rule definitions from a combined rules
+    string, keeping the first occurrence of each rule identifier. Duplicate
+    ``import``/``include`` statements are collapsed and hoisted to the top.
+
+    When several rules (e.g. coming from different community rulesets) declare
+    a rule with the same identifier, ``yara.compile`` aborts the whole scan
+    with a ``duplicated identifier`` SyntaxError. De-duplicating before
+    compilation lets the scan run on the union of the *distinct* rules instead
+    of failing outright.
+
+    Returns a tuple ``(deduped_source, dropped_identifiers)``.
+    """
+    imports = []
+    seen_imports = set()
+    rules_out = []
+    seen_rules = set()
+    dropped = []
+
+    rule_decl = re.compile(r'((?:(?:private|global)\s+)*)rule\s+([A-Za-z_]\w*)')
+    import_decl = re.compile(r'(import|include)\s+("[^"]*")')
+
+    i, n = 0, len(source)
+    while i < n:
+        ch = source[i]
+
+        if ch.isspace():
+            i += 1
+            continue
+        if source.startswith("//", i):
+            nl = source.find("\n", i)
+            i = n if nl == -1 else nl
+            continue
+        if source.startswith("/*", i):
+            end = source.find("*/", i)
+            i = n if end == -1 else end + 2
+            continue
+
+        m = import_decl.match(source, i)
+        if m:
+            stmt = f"{m.group(1)} {m.group(2)}"
+            if stmt not in seen_imports:
+                seen_imports.add(stmt)
+                imports.append(stmt)
+            i = m.end()
+            continue
+
+        m = rule_decl.match(source, i)
+        if m:
+            identifier = m.group(2)
+            brace_start = source.find("{", m.end())
+            if brace_start == -1:
+                break  # malformed input — stop parsing defensively
+            end = _match_yara_braces(source, brace_start)
+            rule_text = source[i:end].strip()
+            if identifier in seen_rules:
+                dropped.append(identifier)
+            else:
+                seen_rules.add(identifier)
+                rules_out.append(rule_text)
+            i = end
+            continue
+
+        # Unrecognised token — advance one char to stay robust.
+        i += 1
+
+    parts = []
+    if imports:
+        parts.append("\n".join(imports))
+    parts.extend(rules_out)
+    return ("\n\n".join(parts) + "\n", dropped)
+
 
 class VolatilityEngine:
     """
@@ -785,6 +902,19 @@ class VolatilityEngine:
                 return None
             
             logger.info(f"Combined {active_rules.count()} rules for scanning")
+
+            # De-duplicate rule identifiers before compilation. yara.compile
+            # aborts on a duplicated identifier (raising a SyntaxError that
+            # would fail the entire scan), which routinely happens when the
+            # same rule is shipped by more than one community ruleset. Keeping
+            # the first occurrence lets the scan run on the distinct union.
+            combined_rules, dropped_rules = _dedupe_yara_rules(combined_rules)
+            if dropped_rules:
+                logger.warning(
+                    f"Dropped {len(dropped_rules)} duplicate rule identifier(s) "
+                    f"before compilation: {', '.join(sorted(set(dropped_rules)))}"
+                )
+
             logger.debug(f"Combined rules content length: {len(combined_rules)} characters")
                             
             # === FILE CREATION PHASE ===
@@ -975,7 +1105,9 @@ class VolatilityEngine:
         except Exception as e:
             logger.error(f"Failed to run YARA scan on evidence '{self.obj.name}': {str(e)}")
             logger.error(traceback.format_exc())
-            return None
+            # Propagate the failure so the calling task can report it to the
+            # user instead of silently treating the scan as successful.
+            raise
             
         finally:
             # Cleanup of temporary file

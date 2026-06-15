@@ -309,12 +309,7 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
             },
         )
         
-        # Engine.run_yara_scan return contract:
-        #   True   -> scan ran, matches found
-        #   False  -> scan ran, no matches
-        #   None   -> scan could not run (no compiled/active rules)
-        #   raises -> scan failed (e.g. YARA syntax error); caught below and
-        #             reported to the user as an error, not a success.
+        # run_yara_scan: True=matches, False=no matches, None=could not run; raises on failure.
         scan_result = None
         scan_executed = False
 
@@ -358,9 +353,7 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
             scan_result = engine.run_yara_scan(scan_scope=scan_scope)
             scan_executed = True
 
-        # The engine returns None when nothing could actually be scanned (e.g.
-        # the selected rules were inactive or never compiled). Treat that as a
-        # failure so the UI does not report a phantom success.
+        # None means nothing was scanned (inactive/uncompiled rules): treat as failure.
         if not scan_executed or scan_result is None:
             raise RuntimeError(
                 "YARA scan did not run: no compiled, active rules were available "
@@ -368,7 +361,7 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
             )
 
         matches_found = bool(scan_result)
-        result = matches_found  # task return value (see `return result` below)
+        result = matches_found
 
         # Generate a unique scan ID with timestamp for logging
         scan_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -376,9 +369,7 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
 
         logger.info(f"YARA scan completed for evidence {evidence_id}. Matches found: {matches_found}. Scan ID: {scan_id}")
 
-        # Send finished notification. result="true" => matches found (the UI
-        # loads the results grid); result="false" => the scan completed cleanly
-        # but produced no matches.
+        # result="true" => matches found; "false" => completed with no matches.
         async_to_sync(channel_layer.group_send)(
             f"volatility_tasks_{evidence_id}",
             {
@@ -387,7 +378,7 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
                     "name": "yarascan",
                     "status": "finished",
                     "result": str(matches_found).lower(),
-                    "scan_id": scan_id,  # Include scan ID in notification
+                    "scan_id": scan_id,
                 },
             },
         )

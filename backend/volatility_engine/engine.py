@@ -82,17 +82,11 @@ def _match_yara_braces(source, start):
 
 def _dedupe_yara_rules(source):
     """
-    Remove duplicate top-level YARA rule definitions from a combined rules
-    string, keeping the first occurrence of each rule identifier. Duplicate
-    ``import``/``include`` statements are collapsed and hoisted to the top.
+    Drop duplicate top-level rule definitions (keeping the first of each
+    identifier) and collapse duplicate import/include statements, so a
+    duplicated identifier doesn't make yara.compile abort the whole scan.
 
-    When several rules (e.g. coming from different community rulesets) declare
-    a rule with the same identifier, ``yara.compile`` aborts the whole scan
-    with a ``duplicated identifier`` SyntaxError. De-duplicating before
-    compilation lets the scan run on the union of the *distinct* rules instead
-    of failing outright.
-
-    Returns a tuple ``(deduped_source, dropped_identifiers)``.
+    Returns ``(deduped_source, dropped_identifiers)``.
     """
     imports = []
     seen_imports = set()
@@ -903,11 +897,7 @@ class VolatilityEngine:
             
             logger.info(f"Combined {active_rules.count()} rules for scanning")
 
-            # De-duplicate rule identifiers before compilation. yara.compile
-            # aborts on a duplicated identifier (raising a SyntaxError that
-            # would fail the entire scan), which routinely happens when the
-            # same rule is shipped by more than one community ruleset. Keeping
-            # the first occurrence lets the scan run on the distinct union.
+            # Drop duplicate identifiers so a collision doesn't abort the scan.
             combined_rules, dropped_rules = _dedupe_yara_rules(combined_rules)
             if dropped_rules:
                 logger.warning(
@@ -947,13 +937,8 @@ class VolatilityEngine:
             formatted_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             scan_description = f"YARA scan using {' + '.join(scan_description_parts)} - processing at {formatted_timestamp}"
             
-            # Plugin selection depends on the requested scan scope:
-            #   - "vad"    -> per-process VadYaraScan (covers user-space memory
-            #                  where ransomware payloads, mutex strings, command
-            #                  lines and registry-related strings actually live)
-            #   - "kernel" -> generic yarascan.YaraScan on the primary layer
-            #                  (kernel space — appropriate for rootkits and
-            #                  kernel-mode threats)
+            # "vad" -> per-process VadYaraScan (user space); "kernel" -> generic
+            # YaraScan on the primary layer (kernel space).
             target_os = getattr(self.obj, "os", "windows")
             normalized_scope = (scan_scope or "vad").lower()
             if normalized_scope == "kernel":
@@ -980,9 +965,7 @@ class VolatilityEngine:
             # Build context and configure plugin
             self.build_context(yara_plugin)
 
-            # Configure both the VadYaraScan plugin and the underlying
-            # yarascan.YaraScan it delegates to (Volatility passes the
-            # yara_file config through the embedded scanner).
+            # Configure both the chosen plugin and the underlying YaraScan it delegates to.
             file_url = f"file://{os.path.abspath(temp_file_path)}"
             for prefix in (plugin_config_prefix, "plugins.YaraScan"):
                 self.context.config[f"{prefix}.yara_file"] = file_url
@@ -997,8 +980,7 @@ class VolatilityEngine:
             if not builted_plugin:
                 logger.error("Failed to construct VadYaraScan plugin")
 
-                # Retry with the absolute path (some Volatility builds reject
-                # the file:// URL form for the yara_file config).
+                # Retry with the absolute path (some builds reject the file:// form).
                 logger.info("Retrying with absolute path...")
                 abs_path = os.path.abspath(temp_file_path)
                 for prefix in (plugin_config_prefix, "plugins.YaraScan"):
@@ -1105,8 +1087,7 @@ class VolatilityEngine:
         except Exception as e:
             logger.error(f"Failed to run YARA scan on evidence '{self.obj.name}': {str(e)}")
             logger.error(traceback.format_exc())
-            # Propagate the failure so the calling task can report it to the
-            # user instead of silently treating the scan as successful.
+            # Propagate so the calling task reports an error, not a fake success.
             raise
             
         finally:

@@ -6,6 +6,8 @@ from volatility_engine.engine import VolatilityEngine
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from yararules.utils import is_batch_upload_active
+from django.conf import settings
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -419,5 +421,147 @@ def start_yarascan(evidence_id, rulesets=None, rules=None, scan_scope="vad"):
                 },
             },
         )
-        
+
     return result
+
+
+@shared_task
+def generate_linux_symbols(evidence_id):
+    """
+    Auto-resolve the Linux kernel ISF for a Linux evidence: detect the banner,
+    download a matching ISF from the community remote index, verify it against
+    the image, and register it as a Symbol. Gates Linux plugin execution until
+    status == "ready". On failure, records guidance for building it manually.
+    """
+    from volatility_engine.models import LinuxSymbolResolution
+    from volatility_engine import isf as isf_mod
+    from symbols.models import Symbol
+
+    instance = Evidence.objects.get(id=evidence_id)
+    if instance.os != "linux":
+        return
+
+    channel_layer = get_channel_layer()
+    resolution, _ = LinuxSymbolResolution.objects.get_or_create(evidence=instance)
+
+    def _set(status, **fields):
+        resolution.status = status
+        for key, value in fields.items():
+            setattr(resolution, key, value)
+        resolution.save()
+        async_to_sync(channel_layer.group_send)(
+            f"volatility_tasks_{evidence_id}",
+            {
+                "type": "send_notification",
+                "message": {
+                    "name": "isf",
+                    "status": resolution.status,
+                    "banner": resolution.banner,
+                    "method": resolution.method,
+                    "message": resolution.message,
+                    "guidance": resolution.guidance,
+                },
+            },
+        )
+
+    engine = VolatilityEngine(instance)
+
+    # Reset any stale banner/guidance from a previous run so intermediate
+    # states don't carry the old "manual build" guidance.
+    _set("detecting", banner=None, method=None, guidance=None,
+         message="Detecting kernel banner…")
+    try:
+        banner = engine.detect_linux_banner()
+    except Exception as e:
+        logger.error(f"Banner detection failed for evidence {evidence_id}: {e}")
+        banner = None
+
+    if not banner:
+        _set("failed_banner", message="Could not find a Linux kernel banner in the image.")
+        return
+
+    _set("resolving", banner=banner, message="Looking up matching ISF…")
+    try:
+        isf_rel = isf_mod.resolve_isf_remote(banner)
+    except Exception as e:
+        logger.error(f"Remote ISF resolution failed for evidence {evidence_id}: {e}")
+        isf_rel = None
+
+    if not isf_rel:
+        _set(
+            "failed_isf",
+            method="remote",
+            guidance=isf_mod.build_manual_guidance(banner),
+            message="No matching ISF in the remote index. Build it manually and upload it.",
+        )
+        return
+
+    _set("verifying", method="remote", message="Verifying ISF against the image…")
+    if not engine.verify_linux_symbols():
+        # Drop the non-working ISF so it doesn't pollute the symbol path.
+        try:
+            os.remove(os.path.join(settings.MEDIA_ROOT, isf_rel))
+        except OSError:
+            pass
+        _set(
+            "failed_isf",
+            method="remote",
+            guidance=isf_mod.build_manual_guidance(banner),
+            message="An ISF was found but did not resolve against this image. Build it manually.",
+        )
+        return
+
+    symbol = Symbol.objects.create(
+        name=(banner.split("(")[0].strip()[:100] or "Linux ISF"),
+        os="Linux",
+        description=banner[:500],
+        symbols_file=isf_rel,
+    )
+    _set("ready", method="remote", linked_symbol=symbol, message="Kernel symbols ready.")
+
+
+@shared_task
+def reverify_linux_symbols(evidence_id):
+    """
+    Re-verify Linux symbols after a manual ISF upload. If the uploaded ISF now
+    resolves against the image, flip the resolution to "ready" (opening the
+    extraction gate); otherwise report that it does not match.
+    """
+    from volatility_engine.models import LinuxSymbolResolution
+
+    instance = Evidence.objects.get(id=evidence_id)
+    if instance.os != "linux":
+        return
+    resolution = LinuxSymbolResolution.objects.filter(evidence=instance).first()
+    if not resolution or resolution.status == "ready":
+        return
+
+    channel_layer = get_channel_layer()
+
+    def _set(status, **fields):
+        resolution.status = status
+        for key, value in fields.items():
+            setattr(resolution, key, value)
+        resolution.save()
+        async_to_sync(channel_layer.group_send)(
+            f"volatility_tasks_{evidence_id}",
+            {
+                "type": "send_notification",
+                "message": {
+                    "name": "isf",
+                    "status": resolution.status,
+                    "banner": resolution.banner,
+                    "method": resolution.method,
+                    "message": resolution.message,
+                    "guidance": resolution.guidance,
+                },
+            },
+        )
+
+    _set("verifying", method="manual", message="Verifying uploaded ISF…")
+    engine = VolatilityEngine(instance)
+    if engine.verify_linux_symbols():
+        _set("ready", method="manual", message="Kernel symbols ready (manual upload).")
+    else:
+        _set("failed_isf", method="manual",
+             message="The uploaded ISF does not match this image's banner. Check the version and rebuild.")

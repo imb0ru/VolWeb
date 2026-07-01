@@ -8,7 +8,19 @@ from channels.layers import get_channel_layer
 
 @receiver(post_save, sender=Evidence)
 def send_evidence_created(sender, instance, created, **kwargs):
-    
+
+    # Kick off automatic Linux ISF resolution so the analyst doesn't have to
+    # upload kernel symbols manually before running plugins.
+    if created and instance.os == "linux":
+        try:
+            from volatility_engine.tasks import generate_linux_symbols
+            generate_linux_symbols.delay(instance.id)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Failed to enqueue Linux ISF resolution for evidence %s", instance.id
+            )
+
     channel_layer = get_channel_layer()
     serializer = EvidenceSerializer(instance)
         

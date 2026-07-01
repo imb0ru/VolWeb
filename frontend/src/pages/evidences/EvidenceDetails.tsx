@@ -86,6 +86,7 @@ const EvidenceDetail: React.FC = () => {
     return (
       <Box sx={{ width: "100%" }}>
         <PluginSelector
+          key={id}
           evidenceId={id!}
           evidenceOs={currentEvidence.os}
           onExtractionStarted={() => {

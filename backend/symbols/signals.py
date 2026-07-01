@@ -15,6 +15,23 @@ def send_symbol_created(sender, instance, created, **kwargs):
         {"type": "send_notification", "status": "created", "message": serializer.data},
     )
 
+    # A newly uploaded Linux ISF may satisfy evidences still waiting for symbols:
+    # re-verify the ones not yet ready so the extraction gate can open.
+    if created and instance.os == "Linux":
+        try:
+            from volatility_engine.models import LinuxSymbolResolution
+            from volatility_engine.tasks import reverify_linux_symbols
+            pending = LinuxSymbolResolution.objects.exclude(status="ready").values_list(
+                "evidence_id", flat=True
+            )
+            for evidence_id in pending:
+                reverify_linux_symbols.delay(evidence_id)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Failed to trigger ISF re-verification after symbol upload"
+            )
+
 
 @receiver(post_delete, sender=Symbol)
 def send_symbol_deleted(sender, instance, **kwargs):

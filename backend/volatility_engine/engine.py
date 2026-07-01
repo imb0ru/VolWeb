@@ -293,6 +293,58 @@ class VolatilityEngine:
             return result
         return None
 
+    def _collect_grid(self, plugin, column=None):
+        """
+        Run a plugin and collect rows in-memory (no DB persistence).
+        Returns a list of the values of ``column`` (or full value tuples).
+        """
+        self.build_context(plugin)
+        constructed = self.construct_plugin()
+        if not constructed:
+            return []
+        grid = constructed.run()
+        col_names = [c.name for c in grid.columns]
+        idx = col_names.index(column) if column in col_names else None
+        rows = []
+
+        def _visit(node, acc):
+            try:
+                values = list(node.values)
+                rows.append(values[idx] if idx is not None else values)
+            except Exception:
+                pass
+            return acc
+
+        if not grid.populated:
+            grid.populate(_visit, None)
+        else:
+            grid.visit(node=None, function=_visit, initial_accumulator=None)
+        return rows
+
+    def detect_linux_banner(self):
+        """Scan the image for the Linux kernel banner; return it or None."""
+        import volatility3.plugins.banners
+
+        banners = self._collect_grid(
+            {volatility3.plugins.banners.Banners: {"name": "banners"}}, column="Banner"
+        )
+        banners = [str(b).strip().strip("\x00").strip() for b in banners if b]
+        for banner in banners:
+            if "Linux version" in banner:
+                return banner
+        return banners[0] if banners else None
+
+    def verify_linux_symbols(self):
+        """Return True if Linux symbols resolve for this image (runs linux.pslist)."""
+        try:
+            rows = self._collect_grid({PsList: {"name": "verify"}})
+            return len(rows) > 0
+        except UnsatisfiedException:
+            return False
+        except Exception as e:
+            logger.warning(f"Linux symbol verification failed: {e}")
+            return False
+
     def start_timeliner(self):
         timeliner_plugin = {
             volatility3.plugins.timeliner.Timeliner: {

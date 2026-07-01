@@ -676,6 +676,18 @@ class SelectiveExtractionTask(APIView):
         if err:
             return err
 
+        # Gate Linux extraction on kernel-symbol readiness: without a matching
+        # ISF the Linux plugins cannot run.
+        if evidence.os == "linux":
+            from .models import LinuxSymbolResolution
+            resolution = LinuxSymbolResolution.objects.filter(evidence=evidence).first()
+            if not resolution or resolution.status != "ready":
+                return Response(
+                    {"error": "Kernel symbols (ISF) are not ready for this Linux evidence. "
+                              "Wait for automatic resolution to finish or upload a matching ISF."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
         try:
             run_timeliner = request.data.get("run_timeliner", False)
             pid_filter = request.data.get("pid", None)
@@ -705,3 +717,39 @@ class SelectiveExtractionTask(APIView):
             return Response({"message": "Selective extraction started"}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class IsfResolutionView(APIView):
+    """
+    Linux kernel-symbol (ISF) resolution status for an evidence, and a retry
+    trigger. Windows evidences are always reported as ready (symbols bundled).
+    """
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, evidence_id):
+        evidence, err = _get_evidence_or_403(evidence_id, request.user)
+        if err:
+            return err
+        if evidence.os != "linux":
+            return Response({"status": "ready", "banner": None, "guidance": None, "message": None})
+        from .models import LinuxSymbolResolution
+        resolution = LinuxSymbolResolution.objects.filter(evidence=evidence).first()
+        if not resolution:
+            return Response({"status": "pending", "banner": None, "guidance": None, "message": None})
+        return Response({
+            "status": resolution.status,
+            "banner": resolution.banner,
+            "method": resolution.method,
+            "guidance": resolution.guidance,
+            "message": resolution.message,
+        })
+
+    def post(self, request, evidence_id):
+        evidence, err = _get_evidence_or_403(evidence_id, request.user)
+        if err:
+            return err
+        if evidence.os != "linux":
+            return Response({"error": "Not a Linux evidence"}, status=status.HTTP_400_BAD_REQUEST)
+        from .tasks import generate_linux_symbols
+        generate_linux_symbols.delay(evidence.id)
+        return Response({"message": "ISF resolution restarted"}, status=status.HTTP_200_OK)

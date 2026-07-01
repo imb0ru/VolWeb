@@ -418,31 +418,31 @@
         "category": "Security",
         "display": "True"
       },
-      "volatility3.plugins.linux.check_afinfo.Check_afinfo": {
+      "volatility3.plugins.linux.malware.check_afinfo.Check_afinfo": {
         "icon": "CheckBox",
         "description": "Verifies the operation function pointers of network protocols.",
         "category": "Network",
         "display": "True"
       },
-      "volatility3.plugins.linux.check_creds.Check_creds": {
+      "volatility3.plugins.linux.malware.check_creds.Check_creds": {
         "icon": "AccountCircle",
         "description": "Checks if any processes are sharing credential structures.",
         "category": "Security",
         "display": "True"
       },
-      "volatility3.plugins.linux.check_idt.Check_idt": {
+      "volatility3.plugins.linux.malware.check_idt.Check_idt": {
         "icon": "Compare",
         "description": "Checks if the IDT has been altered.",
         "category": "Kernel",
         "display": "True"
       },
-      "volatility3.plugins.linux.check_modules.Check_modules": {
+      "volatility3.plugins.linux.malware.check_modules.Check_modules": {
         "icon": "InsertChart",
         "description": "Compares module list to sysfs info, if available.",
         "category": "Kernel",
         "display": "True"
       },
-      "volatility3.plugins.linux.check_syscall.Check_syscall": {
+      "volatility3.plugins.linux.malware.check_syscall.Check_syscall": {
         "icon": "SettingsEthernet",
         "description": "Check system call table for hooks.",
         "category": "Kernel",
@@ -466,7 +466,7 @@
         "category": "Kernel",
         "display": "True"
       },
-      "volatility3.plugins.linux.keyboard_notifiers.Keyboard_notifiers": {
+      "volatility3.plugins.linux.malware.keyboard_notifiers.Keyboard_notifiers": {
         "icon": "Keyboard",
         "description": "Parses the keyboard notifier call chain.",
         "category": "Kernel",
@@ -490,7 +490,7 @@
         "category": "Filesystem",
         "display": "True"
       },
-      "volatility3.plugins.linux.malfind.Malfind": {
+      "volatility3.plugins.linux.malware.malfind.Malfind": {
         "icon": "BugReport",
         "description": "Lists process memory ranges that potentially contain injected code.",
         "category": "Malware",
@@ -502,7 +502,7 @@
         "category": "Filesystem",
         "display": "True"
       },
-      "volatility3.plugins.linux.netfilter.Netfilter": {
+      "volatility3.plugins.linux.malware.netfilter.Netfilter": {
         "icon": "FilterList",
         "description": "Lists Netfilter hooks.",
         "category": "Network",
@@ -532,7 +532,7 @@
         "category": "Network",
         "display": "True"
       },
-      "volatility3.plugins.linux.tty_check.tty_check": {
+      "volatility3.plugins.linux.malware.tty_check.tty_check": {
         "icon": "Call",
         "description": "Checks tty devices for hooks.",
         "category": "Kernel",
@@ -550,7 +550,7 @@
         "category": "Kernel",
         "display": "True"
       },
-      "volatility3.plugins.linux.hidden_modules.Hidden_modules": {
+      "volatility3.plugins.linux.malware.hidden_modules.Hidden_modules": {
         "icon": "ViewModule",
         "description": "Carves memory to find hidden kernel modules",
         "category": "Malware",
@@ -604,7 +604,7 @@
         "category": "Processes",
         "display": "True"
       },
-      "volatility3.plugins.linux.modxview.Modxview": {
+      "volatility3.plugins.linux.malware.modxview.Modxview": {
         "icon": "Visibility",
         "description": "Centralizes module check results to efficiently spot modules presence and taints.",
         "category": "Kernel",

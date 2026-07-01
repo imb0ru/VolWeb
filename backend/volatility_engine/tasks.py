@@ -523,17 +523,19 @@ def generate_linux_symbols(evidence_id):
 @shared_task
 def reverify_linux_symbols(evidence_id):
     """
-    Re-verify Linux symbols after a manual ISF upload. If the uploaded ISF now
-    resolves against the image, flip the resolution to "ready" (opening the
-    extraction gate); otherwise report that it does not match.
+    Re-validate Linux kernel symbols for an evidence and update the extraction
+    gate accordingly. Runs after a manual ISF upload (may *open* the gate) or
+    after an ISF deletion (may *close* it), so it re-checks regardless of the
+    current status.
     """
     from volatility_engine.models import LinuxSymbolResolution
+    from volatility_engine import isf as isf_mod
 
     instance = Evidence.objects.get(id=evidence_id)
     if instance.os != "linux":
         return
     resolution = LinuxSymbolResolution.objects.filter(evidence=instance).first()
-    if not resolution or resolution.status == "ready":
+    if not resolution:
         return
 
     channel_layer = get_channel_layer()
@@ -558,10 +560,11 @@ def reverify_linux_symbols(evidence_id):
             },
         )
 
-    _set("verifying", method="manual", message="Verifying uploaded ISF…")
+    _set("verifying", message="Re-checking kernel symbols…")
     engine = VolatilityEngine(instance)
     if engine.verify_linux_symbols():
-        _set("ready", method="manual", message="Kernel symbols ready (manual upload).")
+        _set("ready", guidance=None, message="Kernel symbols ready.")
     else:
-        _set("failed_isf", method="manual",
-             message="The uploaded ISF does not match this image's banner. Check the version and rebuild.")
+        guidance = isf_mod.build_manual_guidance(resolution.banner) if resolution.banner else None
+        _set("failed_isf", guidance=guidance,
+             message="No usable ISF for this evidence. Re-fetch automatically or upload a matching ISF.")

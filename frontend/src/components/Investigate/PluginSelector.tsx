@@ -204,7 +204,13 @@ const PluginSelector: React.FC<PluginSelectorProps> = ({
         if (message.banner !== undefined) setIsfBanner(message.banner);
         if (message.message !== undefined) setIsfMessage(message.message);
         if (message.guidance !== undefined) setIsfGuidance(message.guidance);
-        if (message.status === "ready" || message.status.startsWith("failed")) {
+        if (message.status === "ready") {
+          setIsfRetrying(false);
+          display_message(
+            "success",
+            "Kernel symbols (ISF) retrieved successfully and added to your Symbols database."
+          );
+        } else if (message.status.startsWith("failed")) {
           setIsfRetrying(false);
         }
       }

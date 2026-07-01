@@ -336,6 +336,16 @@ class YaraScanTask(APIView):
         evidence, err = _get_evidence_or_403(evidence_id, request.user)
         if err:
             return err
+        # Linux YARA scanning needs the kernel symbols too.
+        if evidence.os == "linux":
+            from .models import LinuxSymbolResolution
+            resolution = LinuxSymbolResolution.objects.filter(evidence=evidence).first()
+            if not resolution or resolution.status != "ready":
+                return Response(
+                    {"error": "Kernel symbols (ISF) are not ready for this Linux evidence. "
+                              "Resolve them from the plugin selection screen or upload a matching ISF."},
+                    status=status.HTTP_409_CONFLICT,
+                )
         try:
             rulesets = request.data.get("rulesets", [])
             rules = request.data.get("rules", [])

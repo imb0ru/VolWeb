@@ -39,6 +39,7 @@ import { useSnackbar } from "../SnackbarProvider";
 
 interface YaraScanProps {
   evidenceId: string;
+  evidenceOs?: string;
 }
 
 interface ScanHistory {
@@ -52,7 +53,14 @@ interface ScanHistory {
   count?: number;
 }
 
-const YaraScan: React.FC<YaraScanProps> = ({ evidenceId }) => {
+const YaraScan: React.FC<YaraScanProps> = ({ evidenceId, evidenceOs }) => {
+  // Per-process user-space scan uses VadYaraScan on Windows (VADs) and
+  // VmaYaraScan on Linux (VMAs) — surface the right plugin/region per OS.
+  const isLinuxScan = evidenceOs === "linux";
+  const vadPluginId = isLinuxScan
+    ? "linux.vmayarascan.VmaYaraScan"
+    : "windows.vadyarascan.VadYaraScan";
+  const vadRegion = isLinuxScan ? "VMA" : "VAD";
   const { display_message } = useSnackbar();
   const ws = useRef<WebSocket | null>(null);
   const [rulesets, setRulesets] = useState<YaraRuleSet[]>([]);
@@ -592,17 +600,17 @@ const YaraScan: React.FC<YaraScanProps> = ({ evidenceId }) => {
                   label={
                     <Box>
                       <Typography variant="body2" component="span" sx={{ fontWeight: 500 }}>
-                        Process memory (VAD)
+                        Process memory ({vadRegion})
                       </Typography>
                       <Typography
                         variant="caption"
                         component="div"
                         sx={{ fontFamily: "monospace", color: "text.secondary" }}
                       >
-                        windows.vadyarascan.VadYaraScan
+                        {vadPluginId}
                       </Typography>
                       <Typography variant="caption" component="div" color="text.secondary">
-                        Recommended for malware. Scans every process VAD.
+                        Recommended for malware. Scans every process {vadRegion}.
                       </Typography>
                     </Box>
                   }

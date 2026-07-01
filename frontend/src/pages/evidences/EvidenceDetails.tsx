@@ -196,7 +196,7 @@ const EvidenceDetail: React.FC = () => {
         <Timeliner />
       </CustomTabPanel>
       <CustomTabPanel value={value} index={4}>
-        {id && <YaraScan evidenceId={id} />}
+        {id && <YaraScan evidenceId={id} evidenceOs={currentEvidence?.os} />}
       </CustomTabPanel>
       <StixModule evidenceId={id} />
     </Box>

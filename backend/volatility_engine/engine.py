@@ -998,11 +998,13 @@ class VolatilityEngine:
                 plugin_config_prefix = "plugins.YaraScan"
             else:
                 if target_os == "linux":
-                    import volatility3.plugins.linux.vadyarascan as _vad_mod
+                    import volatility3.plugins.linux.vmayarascan as _vad_mod
+                    yarascan_cls = _vad_mod.VmaYaraScan
+                    plugin_config_prefix = "plugins.VmaYaraScan"
                 else:
                     import volatility3.plugins.windows.vadyarascan as _vad_mod
-                yarascan_cls = _vad_mod.VadYaraScan
-                plugin_config_prefix = "plugins.VadYaraScan"
+                    yarascan_cls = _vad_mod.VadYaraScan
+                    plugin_config_prefix = "plugins.VadYaraScan"
 
             yara_plugin = {
                 yarascan_cls: {

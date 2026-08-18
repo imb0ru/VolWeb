@@ -3,6 +3,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import VolatilityPlugin, EnrichedProcess
 from evidences.models import Evidence
+from django.conf import settings
+from datetime import datetime, timezone
 import os
 import json
 from yararules.models import YaraRule
@@ -727,6 +729,82 @@ class SelectiveExtractionTask(APIView):
             return Response({"message": "Selective extraction started"}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class EvidenceLootView(APIView):
+    """
+    Inventory of the artefact files a plugin run or an on-demand dump wrote to
+    disk for an evidence (media/{id}/)
+    """
+
+    permission_classes = (IsAuthenticated,)
+
+    # Files that live in the evidence media dir but are internal result stores,
+    # not user-facing forensic artefacts.
+    EXCLUDED_NAMES = {"yarascan_results.jsonl"}
+
+    def _evidence_dir(self, evidence_id):
+        return os.path.realpath(os.path.join(settings.MEDIA_ROOT, str(evidence_id)))
+
+    def get(self, request, evidence_id):
+        evidence, err = _get_evidence_or_403(evidence_id, request.user)
+        if err:
+            return err
+
+        base_dir = self._evidence_dir(evidence_id)
+        artefacts = []
+        if os.path.isdir(base_dir):
+            with os.scandir(base_dir) as entries:
+                for entry in entries:
+                    if not entry.is_file() or entry.name in self.EXCLUDED_NAMES:
+                        continue
+                    stat = entry.stat()
+                    artefacts.append({
+                        "name": entry.name,
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(
+                            stat.st_mtime, tz=timezone.utc
+                        ).isoformat(),
+                        "url": f"/media/{evidence_id}/{entry.name}",
+                    })
+
+        artefacts.sort(key=lambda a: a["modified"], reverse=True)
+        total_size = sum(a["size"] for a in artefacts)
+        return Response(
+            {"count": len(artefacts), "total_size": total_size, "artefacts": artefacts},
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, evidence_id):
+        evidence, err = _get_evidence_or_403(evidence_id, request.user)
+        if err:
+            return err
+
+        name = request.data.get("name")
+        if not name:
+            return Response({"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        base_dir = self._evidence_dir(evidence_id)
+        target = os.path.realpath(os.path.join(base_dir, name))
+
+        # Reject anything that escapes the evidence directory (path traversal)
+        # or targets the directory itself / an excluded internal file.
+        if (
+            os.path.commonpath([base_dir, target]) != base_dir
+            or target == base_dir
+            or os.path.basename(target) in self.EXCLUDED_NAMES
+        ):
+            return Response({"error": "Invalid file name"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not os.path.isfile(target):
+            return Response({"error": "Artefact not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            os.remove(target)
+        except OSError as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({"message": "Artefact deleted"}, status=status.HTTP_200_OK)
 
 
 class IsfResolutionView(APIView):

@@ -1,9 +1,16 @@
+import logging
+import os
+import shutil
+
+from django.conf import settings
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from evidences.models import Evidence
 from evidences.serializers import EvidenceSerializer
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+
+logger = logging.getLogger(__name__)
 
 
 @receiver(post_save, sender=Evidence)
@@ -36,6 +43,22 @@ def send_evidence_created(sender, instance, created, **kwargs):
             f"evidences_case_{instance.linked_case.id}",
             {"type": "send_notification", "status": "created", "message": serializer.data},
         )
+
+
+@receiver(post_delete, sender=Evidence)
+def cleanup_evidence_media(sender, instance, **kwargs):
+    """
+    Remove the evidence's dumped-artefact directory (media/{id}/) from disk.
+    """
+    artefact_dir = os.path.join(settings.MEDIA_ROOT, str(instance.id))
+    if os.path.isdir(artefact_dir):
+        try:
+            shutil.rmtree(artefact_dir, ignore_errors=True)
+            logger.info("Removed media directory for deleted evidence %s", instance.id)
+        except Exception:
+            logger.exception(
+                "Failed to remove media directory for deleted evidence %s", instance.id
+            )
 
 
 @receiver(post_delete, sender=Evidence)

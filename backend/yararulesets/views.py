@@ -13,6 +13,7 @@ from yararules.models import YaraRule
 from .serializers import YaraRuleSetSerializer, InitiateUploadSerializer, UploadChunkSerializer, CompleteUploadSerializer
 from yararules.serializers import YaraRuleSerializer
 from yararules.utils import BatchUploadManager, compute_content_hash, get_existing_content_hashes
+from core.validators import safe_media_path
 import os
 import shutil
 from asgiref.sync import async_to_sync
@@ -188,8 +189,10 @@ class CompleteUploadView(APIView):
             except ValueError:
                 return Response({'error': 'Invalid chunk filenames.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            final_filename = upload_session.filename
-            final_file_path = os.path.join(settings.MEDIA_ROOT, 'yara_files', final_filename)
+            try:
+                final_file_path = safe_media_path('yara_files', upload_session.filename)
+            except ValueError:
+                return Response({'error': 'Invalid filename.'}, status=status.HTTP_400_BAD_REQUEST)
             os.makedirs(os.path.dirname(final_file_path), exist_ok=True)
 
             # Assemble the chunks into the final file
